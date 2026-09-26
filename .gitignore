@@ -1,0 +1,12 @@
+# generated files (uploads, rectified images, exports)
+output/*
+!output/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# secrets
+.env

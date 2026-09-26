@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foam Insert Maker</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <strong>Foam Insert Maker</strong>
+  <label class="btn">Upload photo<input id="upload" type="file" accept="image/*" hidden></label>
+  <label class="btn" title="Open a saved .foamproj design file">Open design<input id="open-design" type="file" accept=".foamproj" hidden></label>
+  <a id="save-design" class="btn disabled" href="#" title="Download everything about this design as one .foamproj file">💾 Save design</a>
+  <select id="projects"><option value="">Open recent…</option></select>
+  <span id="pname" class="muted"></span>
+  <span class="grow"></span>
+  <button id="measure" title="Measure a distance (M). Starting a new measurement clears the old one.">📏 Measure</button>
+  <button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button>
+  <span class="unit-toggle">mm <label class="switch"><input id="unit" type="checkbox"><span></span></label> in</span>
+</header>
+
+<main>
+  <!-- left: steps -->
+  <aside id="left">
+    <nav class="tabs">
+      <button data-mode="calibrate">1 · Calibrate</button>
+      <button data-mode="trace">2 · Trace</button>
+      <button data-mode="layout">3 · Layout</button>
+    </nav>
+
+    <section data-panel="calibrate">
+      <div id="crop-box">
+        <h4>Crop photo</h4>
+        <p class="hint" id="crop-hint">Drag a box around the part of the photo you need.</p>
+        <div class="row">
+          <button id="crop-start">Crop…</button>
+          <button id="crop-apply" class="primary" hidden>Apply crop</button>
+          <button id="crop-cancel" hidden>Skip</button>
+        </div>
+        <button id="crop-reset" class="link">Restore full photo</button>
+      </div>
+      <h4>Calibrate</h4>
+      <p class="hint">Click the <b>4 corners</b> of something rectangular whose size you know
+        (drawer, foam sheet, sheet of paper). Drag to adjust. Scroll to zoom, right-drag to pan.</p>
+      <p class="hint">Width = the top edge as seen in the photo.</p>
+      <label>Width <input class="len" id="cal-w" data-mm="" placeholder="e.g. 400 or 15.75in"></label>
+      <label>Height <input class="len" id="cal-h" data-mm="" placeholder="e.g. 300"></label>
+      <label>Extra margin around it <input class="len" id="cal-m" data-mm="0"></label>
+      <div class="row">
+        <button id="cal-clear">Clear corners</button>
+        <button id="cal-go" class="primary">Fix perspective</button>
+      </div>
+      <p id="cal-status" class="muted"></p>
+    </section>
+
+    <section data-panel="trace">
+      <div class="tools">
+        <button data-tool="select" title="Click a cutout to select it">Select</button>
+        <button data-tool="smart" title="Drag a box around one tool; click to mark tool, Alt+click to mark background">✨ Smart select</button>
+        <button data-tool="wand" title="Click on a tool (click again to extend)">Magic wand</button>
+        <button data-tool="threshold" title="Click on a tool; brightness cut-off">Threshold</button>
+        <button data-tool="background" title="Click on the empty foam/background: finds every object">Auto (click bg)</button>
+        <button data-tool="colorkey" title="Click the background colour: everything that isn't that colour is found">🎨 Colour key</button>
+        <button data-tool="draw" title="Click points, click first point or double-click to close">Draw</button>
+        <button data-tool="freehand" title="Drag to trace; let go and drag again to carry on from where you stopped">✎ Freehand</button>
+        <button data-tool="brush" title="Paint the outline in or out (Alt = the other way)">🖌 Brush</button>
+        <button data-tool="tug" title="Drag an outline to push/pull it into shape">Tug</button>
+        <button data-tool="circle" title="Exact circle: click to place, or drag out the radius">◯ Circle</button>
+        <button data-tool="rect" title="Exact rectangle: click to place, or drag out a square">▭ Rectangle</button>
+      </div>
+      <p id="tool-hint" class="hint"></p>
+      <div class="slider" data-for="wand background colorkey"><label>Tolerance <output id="o-tol"></output></label><input id="s-tol" type="range" min="1" max="100" value="20"></div>
+      <div class="slider" data-for="threshold"><label>Threshold <output id="o-thr"></output></label><input id="s-thr" type="range" min="0" max="255" value="128"></div>
+      <div class="slider" data-for="background colorkey"><label>Min area (cm²) <output id="o-area"></output></label><input id="s-area" type="range" min="1" max="100" value="2"></div>
+      <div class="slider" data-for="wand threshold background colorkey smart"><label>Smoothing (mm) <output id="o-smooth"></output></label><input id="s-smooth" type="range" min="0" max="5" step="0.1" value="0.5"></div>
+      <div class="slider" data-for="wand threshold background colorkey smart"><label>Detail (simplify mm) <output id="o-simp"></output></label><input id="s-simp" type="range" min="0.05" max="2" step="0.05" value="0.3"></div>
+      <div class="opts" data-for="circle"><label>Radius <input class="len" id="sh-r" data-mm="25"></label>
+        <p class="muted" id="sh-d"></p></div>
+      <div class="opts" data-for="rect"><div class="row">
+        <label>Width <input class="len" id="sh-rw" data-mm="100"></label>
+        <label>Height <input class="len" id="sh-rh" data-mm="50"></label></div></div>
+      <div class="opts" data-for="brush"><div class="fmt"><span class="seg">
+        <button type="button" id="br-add" class="active">Add</button><button type="button" id="br-erase">Erase</button></span></div></div>
+      <div class="slider" data-for="brush"><label>Brush size (mm) <output id="o-brush"></output></label><input id="s-brush" type="range" min="1" max="40" step="0.5" value="6"></div>
+      <div class="slider" data-for="tug"><label>Tug radius (mm) <output id="o-tug"></output></label><input id="s-tug" type="range" min="2" max="60" value="12"></div>
+      <div class="row">
+        <button id="prev-clear">Clear (Esc)</button>
+        <button id="prev-add" class="primary">Add cutout (Enter)</button>
+      </div>
+      <p id="trace-status" class="muted"></p>
+    </section>
+
+    <section data-panel="layout">
+      <label class="check big"><input id="arrange" type="checkbox"> Adjust cutout position</label>
+      <div id="arrange-box" hidden>
+        <p class="hint">Drag to move. Drag the round handle to rotate (Shift = 15° steps).
+          Click once on a straight edge to square it up. Arrows nudge, [ and ] rotate.</p>
+        <div class="row"><button id="rot-l">⟲ 90°</button><button id="rot-r">⟳ 90°</button></div>
+      </div>
+
+      <h4>Grid</h4>
+      <div class="row">
+        <label class="check"><input id="grid-on" type="checkbox"> Show grid</label>
+        <label class="check"><input id="grid-snap" type="checkbox"> Snap to grid</label>
+      </div>
+      <label>Grid spacing <input class="len" id="grid-mm" data-mm="10"></label>
+      <p class="muted" id="grid-origin-txt"></p>
+      <div class="row">
+        <button id="grid-from-sel" title="Put the grid origin on the selected cutout's or text's centre">Origin at selection</button>
+        <button id="grid-pick" title="Click anywhere on the image to put the grid origin there">Origin at point…</button>
+      </div>
+      <button id="grid-reset" class="link">Reset origin to sheet corner</button>
+      <p class="hint">Snapping moves a cutout's or text's centre onto grid points (also sheet corners and
+        measurements). Hold Alt while dragging to move freely. With snap on, arrow keys move one grid step.</p>
+
+      <h4>Foam sheet</h4>
+      <p class="hint">Drag the sheet's corner handles to pull it in.</p>
+      <label>Sheet width <input class="len" id="sh-w" data-mm=""></label>
+      <label>Sheet height <input class="len" id="sh-h" data-mm=""></label>
+      <button id="sheet-reset" class="link">Reset sheet to calibration</button>
+      <label>Default buffer for new cutouts <input class="len" id="def-buf" data-mm="1"></label>
+
+      <h4>Finger grips</h4>
+      <label class="check"><input id="grip-auto" type="checkbox"> Add a finger grip to new cutouts</label>
+      <label>Place new grips at
+        <select id="grip-at"><option value="edge">Edge of the tool</option><option value="center">Centre of the tool</option></select></label>
+      <label>Grip diameter <input class="len" id="grip-d" data-mm="20"></label>
+      <p class="hint">Select a cutout and drag its grip handle: edge grips (yellow) slide along the edge,
+        centre grips (orange) move freely. A centre grip only cuts where it's wider than the tool.
+        Alt+click a handle to remove it.</p>
+
+      <h4>Text</h4>
+      <button id="text-add">Add text</button>
+      <p class="hint">Text is engraved (blue layer). Drag it on this tab to move it; double-click it to edit.</p>
+
+      <h4>Laser work area</h4>
+      <label>Bed width <input class="len" id="bed-w" data-mm="400"></label>
+      <label>Bed height <input class="len" id="bed-h" data-mm="400"></label>
+      <label>Joint between pieces
+        <select id="joint"><option value="jigsaw">Jigsaw</option><option value="dovetail">Dovetail</option><option value="straight">Straight</option></select></label>
+      <label>Joint size <input class="len" id="tab" data-mm="12"></label>
+      <label>Joint spacing <input class="len" id="tab-sp" data-mm="100"></label>
+      <div class="row">
+        <label>Columns <input id="nx" type="number" min="0" value="0" title="0 = automatic"></label>
+        <label>Rows <input id="ny" type="number" min="0" value="0" title="0 = automatic"></label>
+      </div>
+      <label class="check"><input id="basis" type="checkbox" checked> Calculate pieces based on initial crop</label>
+      <div id="seams"></div>
+      <label class="check"><input id="show-tiles" type="checkbox" checked> Show pieces on image</label>
+      <label class="check"><input id="incl-outline" type="checkbox" checked> Include sheet outline in SVG</label>
+      <p id="tile-status" class="muted"></p>
+      <p id="exp-warn" class="warn" hidden></p>
+      <div class="col">
+        <a id="exp-svg" class="btn primary" href="#">Export SVG (whole sheet)</a>
+        <a id="exp-zip" class="btn" href="#">Export pieces (ZIP of SVGs)</a>
+      </div>
+      <p class="hint">SVGs are in real millimetres – import straight into LightBurn, no scaling.
+        Cuts are black, text is blue.</p>
+    </section>
+  </aside>
+
+  <!-- centre: canvas -->
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="empty">Upload a top-down photo to start, or open a saved design. You can also drop either one here.</div>
+    <div id="drop">Drop a photo or a .foamproj design</div>
+  </div>
+
+  <!-- right: tables -->
+  <aside id="right">
+    <h3>Cutouts</h3>
+    <table id="cut-table" class="list">
+      <thead><tr><th>#</th><th></th><th>Name</th><th>Size</th><th>Buffer</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="no-cuts" class="muted">No cutouts yet.</p>
+    <h3>Text</h3>
+    <table id="text-table" class="list">
+      <thead><tr><th>#</th><th>Text</th><th>Height</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="no-texts" class="muted">No text yet.</p>
+    <p class="hint">Double-click a name to rename it. The eye hides a cutout while you work (it still gets cut);
+      the scissors turn its output off (greyed, left out of the export).</p>
+  </aside>
+</main>
+
+<dialog id="edit">
+  <form method="dialog">
+    <h3>Edit cutout <span id="ed-num"></span></h3>
+    <label>Name <input id="ed-name"></label>
+    <label>Buffer (+ = looser, − = tighter) <input class="len" id="ed-buf" data-mm="0"></label>
+    <label>Smoothing (fill small notches) <input class="len" id="ed-smooth" data-mm="0"></label>
+    <label>Rotation (degrees) <input id="ed-rot" type="number" step="any"></label>
+    <label>Colour <input id="ed-color" type="color"></label>
+    <label class="check"><input id="ed-include" type="checkbox"> Include in export</label>
+    <div class="grips">Finger grips: <b id="ed-grips"></b>
+      <button type="button" id="ed-grip-add" title="Add a grip on the edge">+ Edge</button>
+      <button type="button" id="ed-grip-add-c" title="Add a grip in the middle of the tool">+ Centre</button>
+      <button type="button" id="ed-grip-clear">Remove all</button></div>
+    <div class="row">
+      <button value="cancel">Cancel</button>
+      <button value="ok" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tedit">
+  <form method="dialog">
+    <h3><span id="te-title">Edit text</span> <span id="te-num"></span></h3>
+    <div class="fmt">
+      <span class="seg">
+        <button type="button" data-align="left" title="Align left"><svg viewBox="0 0 16 16"><path d="M2 3h12M2 6.5h8M2 10h12M2 13.5h8"/></svg></button>
+        <button type="button" data-align="center" title="Centre"><svg viewBox="0 0 16 16"><path d="M2 3h12M4 6.5h8M2 10h12M4 13.5h8"/></svg></button>
+        <button type="button" data-align="right" title="Align right"><svg viewBox="0 0 16 16"><path d="M2 3h12M6 6.5h8M2 10h12M6 13.5h8"/></svg></button>
+      </span>
+      <span class="seg">
+        <button type="button" id="te-bold" title="Bold"><b>B</b></button>
+        <button type="button" id="te-italic" title="Italic"><i>I</i></button>
+      </span>
+      <select id="te-font" title="Font">
+        <option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option>
+      </select>
+    </div>
+    <textarea id="te-text" rows="4" spellcheck="false"></textarea>
+    <p class="hint">Enter saves · Shift+Enter starts a new line</p>
+    <label>Letter height <input class="len" id="te-size" data-mm="8"></label>
+    <label>Line spacing <input id="te-spacing" type="number" step="0.1" min="0.5" max="5"></label>
+    <label>Rotation (degrees) <input id="te-rot" type="number" step="any"></label>
+    <div class="row">
+      <button value="cancel">Cancel</button>
+      <button value="ok" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
