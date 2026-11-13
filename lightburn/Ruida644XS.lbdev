@@ -1,0 +1,106 @@
+{
+    "DeviceList": [
+        {
+            "Checklist": "",
+            "DefaultCutList": [],
+            "DefaultToolCutList": [],
+            "DisplayName": "Ruida 644XS",
+            "EnableLaser2Offset": false,
+            "EnableProcessOffset": false,
+            "GUID": "IwMGIxLTI0",
+            "Height": 200,
+            "HomeOnStartup": true,
+            "Info": "",
+            "Laser2OffsetX": 0,
+            "Laser2OffsetY": 0,
+            "LastCamera": "",
+            "LastDevLibraryPath": "",
+            "MirrorX": false,
+            "MirrorY": true,
+            "Name": "Ruida",
+            "ProcessOffsetX": 0,
+            "ProcessOffsetY": 0,
+            "ProfilePath": "Ruida",
+            "ReverseIntervalCompensation": false,
+            "Settings": {
+                "AlignH": 1,
+                "AlignV": 1,
+                "Cameras": [
+                    {
+                        "AlignmentInterpolateByHeight": false,
+                        "AlignmentLayout": {},
+                        "CameraType": "uvc",
+                        "CameraWarmUpFrames": 3,
+                        "CaptureFPS": 30,
+                        "CaptureFormat": "NV12",
+                        "CaptureResolution": [
+                            1920,
+                            1080
+                        ],
+                        "DisplayName": "Overhead - USB Camera",
+                        "GUID": "hLWEzZmE",
+                        "LastCamera": "\\\\?\\USB#VID_0C45&PID_6368&MI_00#8&231cdbca&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}\\GLOBAL",
+                        "LastCameraName": "USB Camera",
+                        "LensCalibrations": [
+                            {
+                                "CalibrationName": "Precalibrated",
+                                "CameraMatrix": [
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    1
+                                ],
+                                "CameraName": "USB Camera",
+                                "DistortionMatrix": [
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "IsFisheye": false
+                            }
+                        ],
+                        "MatchById": true,
+                        "MatchByName": false,
+                        "MountType": "over",
+                        "OverlayInclude": true,
+                        "SelectedCalibrationName": "Precalibrated"
+                    }
+                ],
+                "ClickSelTolerance": 3,
+                "ControlUnits": 0,
+                "CutOrigin": 2,
+                "DockState_ArtBrowser": false,
+                "DockState_Camera": true,
+                "DockState_Cameras": true,
+                "DockState_Console": false,
+                "DockState_CutLibrary": true,
+                "DockState_LaserFiles": false,
+                "DockState_Macros": false,
+                "DockState_Move": true,
+                "DockState_ShapeProperties": false,
+                "DockState_VariableText": true,
+                "GridShade": 224,
+                "GridSnap": 1,
+                "GridSnapEnabled": true,
+                "GridSpacing": 10,
+                "LastControlUnits_Metric": 0,
+                "NetworkTimeout": 5000,
+                "ObjSnap": 10,
+                "ObjSnapEnabled": true,
+                "SupportHeight": 10,
+                "Units": 0,
+                "UserFinishX": 0,
+                "UserFinishY": 0
+            },
+            "Type": "Serial",
+            "Width": 350
+        }
+    ]
+}

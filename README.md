@@ -31,6 +31,11 @@ Then open http://127.0.0.1:5000.
 
 Linux or macOS: use `source .venv/bin/activate` instead.
 
+## LightBurn config
+
+The LightBurn device profile and Ruida 644XS controller settings for the laser this was built for are in
+[`lightburn/`](lightburn/). See [`lightburn/README.md`](lightburn/README.md) before loading them.
+
 ## Tips
 
 - **Photo:** shoot as close to straight down as you can, in even light, with the tools on a
