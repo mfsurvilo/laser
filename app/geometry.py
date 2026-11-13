@@ -245,13 +245,14 @@ def _pad(vals, n):
 
 def grid_size(W, H, s):
     prot = joint_protrusion(s["joint"], s["tab_mm"])
+    kerf = s.get("kerf_mm", 0.0)
 
     def count(length, bed, override):
         if override and override > 0:
             return int(override)
         if length <= bed:
             return 1
-        return max(1, math.ceil(length / max(bed - 2 * prot - 2, 1)))
+        return max(1, math.ceil(length / max(bed - 2 * prot - 2 - kerf, 1)))
 
     return count(W, s["bed_w"], s.get("nx")), count(H, s["bed_h"], s.get("ny"))
 
@@ -270,9 +271,12 @@ def seam_layout(base, s):
     }
 
 
-def build_tiles(base, clip, holes, s):
+def build_tiles(base, clip, holes, s, kerf=True):
     """Split the clip rectangle into pieces using seams laid out over `base`.
 
+    With kerf=True each piece reaches half the laser kerf past its seams (only the seams; the sheet
+    edge and cutouts are left alone), so after the beam burns that away the joints fit tight and
+    cutouts spanning a seam keep their full length. kerf=False gives the nominal seams for the preview.
     Returns (layout, list of dicts: row, col, geom, fits).
     """
     L = seam_layout(base, s)
@@ -288,10 +292,12 @@ def build_tiles(base, clip, holes, s):
     if holes is not None:
         sheet = sheet.difference(holes)
 
+    grow = max(s.get("kerf_mm", 0.0), 0.0) / 2 if kerf else 0.0
+
     tiles = []
     for r in range(L["ny"]):
         for c in range(L["nx"]):
-            g = sheet
+            g = box(-BIG, -BIG, BIG, BIG)
             if c < L["nx"] - 1:
                 g = g.intersection(left[c])
             if c > 0:
@@ -300,6 +306,9 @@ def build_tiles(base, clip, holes, s):
                 g = g.intersection(above[r])
             if r > 0:
                 g = g.difference(above[r - 1])
+            if grow:
+                g = g.buffer(grow, quad_segs=8, join_style="mitre")
+            g = sheet.intersection(g)
             if g.is_empty or g.area < 1:
                 continue
             minx, miny, maxx, maxy = g.bounds

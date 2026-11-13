@@ -10,3 +10,10 @@ venv/
 
 # secrets
 .env
+
+# homography test photos (large; keep labels.json)
+homeography/*.jpeg
+homeography/*.jpg
+
+# local Claude settings
+.claude/settings.local.json

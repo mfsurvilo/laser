@@ -42,8 +42,8 @@ Linux or macOS: use `source .venv/bin/activate` instead.
 - **Units:** mm by default. Any length box accepts a unit, so `4in`, `3 1/2in`, `3-1/2"`, `10cm` and `25mm`
   all work, and so do sums and differences like `15in + 3mm - 1/8in`. With no spaces, `3-1/2` is a
   mixed number (three and a half). Toggle to inches at the top right and bare numbers are read as inches.
-- **Buffer:** each cutout has a buffer, normally positive (for example +1 mm) so the tool
-  drops in easily. A negative buffer makes a tighter grip. New cutouts use the *default buffer* from
+- **Buffer:** each cutout has a buffer (0 mm by default; the laser kerf already adds a little
+  clearance). Make it positive if a tool needs to drop in more easily. A negative buffer makes a tighter grip. New cutouts use the *default buffer* from
   the Layout tab. Use Edit (✎) to change a cutout's buffer, name, colour, smoothing, or to leave it
   out of the export.
 - **Finger grips:** off by default. Add one from a cutout's Edit dialog (✎), or tick *Add a finger grip to
@@ -68,6 +68,13 @@ Linux or macOS: use `source .venv/bin/activate` instead.
   Enter closes it, and Backspace removes the last stroke.
 - **🖌 Brush:** paint over a preview or a cutout to add to it. *Erase* (or holding Alt) paints it away,
   and painting on empty space starts a new outline. Set the size with the slider.
+- **Tug:** press right on an outline (a yellow dot shows where it will grab) and drag. Near a corner it
+  grabs that exact corner. Only the stretch highlighted in yellow moves, measured along the outline, so
+  the far side of a thin tool stays put. *Reach* 0 moves just the one point.
+- **〰 Smooth / straighten:** drag along part of an outline (preview or cutout) to pick a stretch; the ends
+  snap to corners. *Smooth* evens out bumps (set how much with the slider, and watch the cyan preview);
+  *Straight line* replaces the stretch with a straight edge. Enter applies, Esc cancels. Handy after
+  Smart select to clean up a straight side or a ragged curve.
 - **Circle and rectangle** (Trace tab): exact shapes. Type a radius (or width and height) and click to
   place one centred on the click, or drag: a circle from its centre, a rectangle from a corner as a
   square (hold Shift for any rectangle). Drag the placed shape to move it (it snaps if the grid snap is on).
@@ -96,7 +103,11 @@ Linux or macOS: use `source .venv/bin/activate` instead.
 - **Exports:**
   - *Export SVG*: the whole sheet, with the outline and every cutout.
   - *Export pieces*: a ZIP with one SVG per bed-sized piece, each placed at its own origin, plus
-    `overview_all_tiles.svg` showing how the pieces fit together.
+    `overview_all_tiles.svg` showing how the pieces fit together. Each piece's seam edge (joints
+    included) is pushed out by half the *Laser kerf* setting (default 0.6 mm), so the joints fit tight and
+    a cutout that spans a seam keeps its full length once the beam has burned the kerf away. The sheet
+    edge and cutouts are not changed. If the joints are too tight to push together, lower the kerf; if
+    they're loose, raise it. The on-screen preview shows the seams without kerf.
   - Cut lines are black and text is blue, so LightBurn puts them on separate layers (set the blue one to engrave/fill).
 
 ## Layout
@@ -133,5 +144,21 @@ zip file if you want to look inside.
 
 Each project is also saved as you work in `output/<project-id>/`. Use *Open recent* in the header to reopen one,
 or go to `http://127.0.0.1:5000/?p=<project-id>`.
+
+## Homography Lab (experimental)
+
+A separate test bench for drawers too big or crowded for one photo: it stitches several photos into one
+top-down, millimetre-scaled image.
+
+```powershell
+.venv\Scripts\python homography_lab\server.py            # photos from homeography\
+.venv\Scripts\python homography_lab\server.py D:\photos  # or any folder
+```
+
+Then open http://127.0.0.1:5001. Label a rectangle of known size in one photo (the *frame*), use
+*Auto-align all*, then place point pairs by hand for any photo it can't match. Finally, *Build mosaic*.
+*Export full quality* downloads the mosaic at the sharpest photo's resolution. It comes as a PNG or JPG
+with its DPI set, so printing at 100% gives true size, or as a PDF tiled over Letter/A4 sheets at 1:1 scale.
+Labels are saved to `labels.json` in the photo folder.
 
 Ideas for later go in [ToDo.md](ToDo.md).

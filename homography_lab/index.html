@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Homography Lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#16181c; --panel:#1f2228; --line:#343842; --text:#e6e6e6; --dim:#9aa0aa; --acc:#4cc2ff; --warn:#ffb347; --bad:#ff6b6b; --ok:#6bd48f; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); display:grid; grid-template-columns:230px 1fr 320px; height:100vh; overflow:hidden; }
+  aside { background:var(--panel); border-right:1px solid var(--line); overflow:auto; padding:10px; }
+  aside.right { border-right:0; border-left:1px solid var(--line); }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:14px 0 6px; }
+  h2:first-child { margin-top:0; }
+  .photo { display:flex; gap:8px; align-items:center; padding:4px; border-radius:6px; cursor:pointer; border:1px solid transparent; }
+  .photo:hover { background:#2a2e36; }
+  .photo.sel { border-color:var(--acc); background:#253040; }
+  .photo img { width:44px; height:58px; object-fit:cover; border-radius:3px; background:#000; }
+  .photo .meta { flex:1; min-width:0; font-size:11px; color:var(--dim); }
+  .photo .meta b { color:var(--text); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:500; }
+  .tag { display:inline-block; padding:0 5px; border-radius:3px; font-size:10px; background:#333; color:var(--dim); margin-right:3px; }
+  .tag.frame { background:#1d4d6b; color:#bfe6ff; }
+  .tag.ok { background:#1e4a2d; color:#bff0cf; }
+  .tag.dot { width:10px; height:10px; padding:0; vertical-align:middle; }
+  main { position:relative; overflow:hidden; background:#0d0e10; display:flex; }
+  .pane { position:relative; flex:1; min-width:0; }
+  .pane + .pane { border-left:2px solid var(--line); }
+  .pane canvas { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
+  .pane .cap { position:absolute; left:8px; top:8px; background:#000a; padding:3px 8px; border-radius:4px; color:var(--dim); pointer-events:none; }
+  #loupe { position:absolute; right:10px; top:10px; width:180px; height:180px; border:1px solid var(--line); border-radius:6px; background:#000; pointer-events:none; display:none; z-index:2; }
+  #hud { position:absolute; left:10px; bottom:10px; right:10px; background:#000a; padding:6px 10px; border-radius:6px; color:var(--dim); pointer-events:none; z-index:2; }
+  #banner { position:absolute; left:50%; top:10px; transform:translateX(-50%); background:#000d; padding:6px 12px; border-radius:6px; display:none; z-index:3; max-width:80%; }
+  button { background:#2c313a; color:var(--text); border:1px solid var(--line); border-radius:5px; padding:5px 9px; cursor:pointer; font:inherit; }
+  button:hover { background:#363c47; }
+  button.primary { background:#1d5f86; border-color:#2a7fb0; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.icon { padding:2px 6px; }
+  input, select { background:#12141a; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:4px 6px; font:inherit; width:100%; }
+  .ref { border:1px solid var(--line); border-radius:6px; padding:8px; margin-bottom:8px; }
+  .ref.active { border-color:var(--acc); }
+  .ref .row { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
+  .ref label { font-size:11px; color:var(--dim); }
+  .ref .head { display:flex; gap:4px; align-items:center; }
+  .ref .head input { flex:1; }
+  .note { color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+  .tabs { display:flex; gap:4px; margin-bottom:8px; }
+  .tabs button.on { background:#1d5f86; border-color:#2a7fb0; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { padding:3px 4px; border-bottom:1px solid var(--line); text-align:left; }
+  .bad { color:var(--bad); } .ok { color:var(--ok); } .warn { color:var(--warn); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:center; }
+  .kv input { width:80px; }
+  code { background:#12141a; padding:0 3px; border-radius:3px; }
+</style>
+</head>
+<body>
+<aside>
+  <h2>Photos</h2>
+  <div id="photos"></div>
+  <p class="note" id="photodir"></p>
+  <h2>Results</h2>
+  <div class="btns" id="resultBtns"></div>
+</aside>
+
+<main id="main">
+  <canvas id="loupe" width="180" height="180"></canvas>
+  <div id="banner"></div>
+  <div id="hud"></div>
+</main>
+
+<aside class="right"><div id="side"></div></aside>
+
+<script>
+const $ = s => document.querySelector(s);
+const loupe = $('#loupe'), lctx = loupe.getContext('2d');
+
+let S = { photos: [], labels: { frame: null, photos: {} } };
+let panes = [];              // one pane normally; two while placing point pairs
+let hover = null;            // { pane, sx, sy } under the mouse
+let activeRef = null;        // ref id being edited on the main photo
+let pairMode = false;        // placing point pairs between panes[0] and panes[1]
+let drag = null, measure = [];
+let results = {};
+let unitIn = false, space = false;
+
+// ---------- lengths: "300", "12in", "3 1/2in", "11-3/4\"", "30cm", "1ft 2in" ----------
+function parseLen(str) {
+  if (str == null) return null;
+  const s = String(str).trim().toLowerCase().replace(/(\d)-(\d+\/\d+)/g, '$1 $2');
+  if (!s) return null;
+  let total = 0, any = false, m;
+  const re = /(\d+(?:\.\d+)?)(?:\s+(\d+)\/(\d+))?(?:\/(\d+))?\s*(mm|cm|m|in|inch|inches|"|ft|feet|')?/g;
+  while ((m = re.exec(s))) {
+    if (!m[0].trim()) { re.lastIndex++; continue; }
+    let v = parseFloat(m[1]);
+    if (m[2]) v += +m[2] / +m[3];
+    if (m[4]) v /= +m[4];
+    const u = m[5] || (unitIn ? 'in' : 'mm');
+    v *= { mm: 1, cm: 10, m: 1000, in: 25.4, inch: 25.4, inches: 25.4, '"': 25.4, ft: 304.8, feet: 304.8, "'": 304.8 }[u];
+    total += v; any = true;
+  }
+  return any ? total : null;
+}
+const fmt = mm => unitIn ? (mm / 25.4).toFixed(3) + ' in' : mm.toFixed(1) + ' mm';
+const short = n => n.slice(0, 8);
+
+// ---------- data ----------
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const t = await r.text(), m = t.match(/<p>(.*?)<\/p>/s);
+    throw new Error(m ? m[1] : t.slice(0, 200));
+  }
+  return r.json();
+}
+let saveTimer;
+function saveLabels() { clearTimeout(saveTimer); saveTimer = setTimeout(() => api('/api/labels', S.labels), 300); }
+const flush = () => { clearTimeout(saveTimer); return api('/api/labels', S.labels); };
+const P = name => (S.labels.photos[name] ??= { refs: [] });
+const refsOf = name => P(name).refs;
+const isFrame = (name, id) => S.labels.frame?.photo === name && S.labels.frame?.ref === id;
+const framePhoto = () => S.labels.frame?.photo;
+const frameReady = () => { const f = S.labels.frame; const r = f && refsOf(f.photo).find(r => r.id === f.ref); return !!(r && r.pts.length === 4 && r.w_mm && r.h_mm); };
+const isAligned = n => n === framePhoto() || !!P(n).align;
+
+function banner(msg, sticky = false) {
+  const b = $('#banner'); b.textContent = msg; b.style.display = msg ? 'block' : 'none'; b.dataset.sticky = sticky ? 1 : '';
+  if (msg && !sticky) setTimeout(() => { if (b.textContent === msg) b.style.display = 'none'; }, 7000);
+}
+async function busy(msg, fn) {
+  banner(msg + '…', true); document.body.style.cursor = 'wait';
+  try { const r = await fn(); banner(''); return r; }
+  catch (e) { banner('⚠ ' + e.message); throw e; }
+  finally { document.body.style.cursor = ''; }
+}
+
+// ---------- geometry ----------
+function orderCorners(pts) {           // TL, TR, BR, BL, same rule as the server
+  const c = pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length], [0, 0]);
+  const s = [...pts].sort((a, b) => Math.atan2(a[1] - c[1], a[0] - c[0]) - Math.atan2(b[1] - c[1], b[0] - c[0]));
+  let k = 0; s.forEach((p, i) => { if (p[0] + p[1] < s[k][0] + s[k][1]) k = i; });
+  return s.slice(k).concat(s.slice(0, k));
+}
+// least-squares homography from >= 4 point pairs (DLT with h33 = 1), for live previews only
+function solveH(pairs) {
+  if (pairs.length < 4) return null;
+  const A = Array.from({ length: 8 }, () => new Array(9).fill(0));
+  const add = (row, rhs) => { for (let i = 0; i < 8; i++) { for (let j = 0; j < 8; j++) A[i][j] += row[i] * row[j]; A[i][8] += row[i] * rhs; } };
+  for (const [[x, y], [u, v]] of pairs) {
+    add([x, y, 1, 0, 0, 0, -u * x, -u * y], u);
+    add([0, 0, 0, x, y, 1, -v * x, -v * y], v);
+  }
+  for (let c = 0; c < 8; c++) {
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++) if (r !== c) { const f = A[r][c] / A[c][c]; for (let k = c; k < 9; k++) A[r][k] -= f * A[c][k]; }
+  }
+  const h = A.map((r, i) => r[8] / r[i]);
+  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+}
+const applyH = (H, [x, y]) => { const w = H[2][0] * x + H[2][1] * y + H[2][2]; return [(H[0][0] * x + H[0][1] * y + H[0][2]) / w, (H[1][0] * x + H[1][1] * y + H[1][2]) / w]; };
+const inv3 = m => {
+  const [a, b, c] = m[0], [d, e, f] = m[1], [g, h, i] = m[2];
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
+  return [[A / det, -(b * i - c * h) / det, (b * f - c * e) / det], [B / det, (a * i - c * g) / det, -(a * f - c * d) / det], [C / det, -(a * h - b * g) / det, (a * e - b * d) / det]];
+};
+
+// ---------- panes ----------
+function makePane() {
+  const el = document.createElement('div'); el.className = 'pane';
+  const canvas = document.createElement('canvas'), cap = document.createElement('div'); cap.className = 'cap';
+  el.append(canvas, cap); $('#main').insertBefore(el, loupe);
+  const pane = { el, canvas, cap, ctx: canvas.getContext('2d'), cam: { s: 1, x: 0, y: 0 }, img: null, kind: 'photo', name: null, ppm: null, margin: 0, title: '' };
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const [mx, my] = local(pane, e), k = Math.exp(-e.deltaY * 0.0015), c = pane.cam;
+    c.x = mx - (mx - c.x) * k; c.y = my - (my - c.y) * k; c.s *= k; drawAll();
+  }, { passive: false });
+  canvas.addEventListener('mousedown', e => onDown(pane, e));
+  return pane;
+}
+const local = (pane, e) => { const r = pane.canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+const toImg = (p, sx, sy) => [(sx - p.cam.x) / p.cam.s, (sy - p.cam.y) / p.cam.s];
+const toScr = (p, ix, iy) => [ix * p.cam.s + p.cam.x, iy * p.cam.s + p.cam.y];
+function fit(p) {
+  if (!p.img) return;
+  const r = p.canvas.getBoundingClientRect();
+  p.cam.s = Math.min(r.width / p.img.naturalWidth, r.height / p.img.naturalHeight) * 0.95;
+  p.cam.x = (r.width - p.img.naturalWidth * p.cam.s) / 2;
+  p.cam.y = (r.height - p.img.naturalHeight * p.cam.s) / 2;
+}
+function resizeAll() {
+  for (const p of panes) { const r = p.canvas.getBoundingClientRect(); p.canvas.width = r.width * devicePixelRatio; p.canvas.height = r.height * devicePixelRatio; }
+  drawAll();
+}
+function setPaneCount(n) {
+  while (panes.length < n) panes.push(makePane());
+  while (panes.length > n) panes.pop().el.remove();
+  resizeAll();
+}
+function loadImage(url) { return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; }); }
+async function setPane(p, props, url) {
+  const img = await busy('Loading', () => loadImage(url));
+  const refit = !p.img || p.img.naturalWidth !== img.naturalWidth || p.img.naturalHeight !== img.naturalHeight || props.kind !== 'photo';
+  Object.assign(p, { ppm: null, margin: 0 }, props, { img });
+  p.cap.textContent = p.title;
+  if (refit) fit(p);
+  drawAll();
+}
+
+// ---------- pair data ----------
+const pairsRec = () => P(panes[0].name).pairs ??= { target: framePhoto(), pts: [] };
+const completePairs = () => pairsRec().pts.filter(pr => pr[0] && pr[1]);
+const pairH = () => solveH(completePairs());
+
+// ---------- rendering ----------
+function drawAll() { panes.forEach(draw); drawHud(); drawLoupe(); }
+function draw(p, idx) {
+  const d = devicePixelRatio, ctx = p.ctx;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
+  if (!p.img) return;
+  ctx.imageSmoothingEnabled = p.cam.s < 2;
+  ctx.drawImage(p.img, p.cam.x, p.cam.y, p.img.naturalWidth * p.cam.s, p.img.naturalHeight * p.cam.s);
+  if (pairMode) drawPairs(p, idx);
+  else if (p.kind === 'photo') drawRefs(p);
+  if (p.ppm) drawMeasure(p);
+}
+function dot(ctx, [x, y], r, col) { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); }
+function label(ctx, [x, y], t, col) {
+  ctx.font = '600 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(t).width + 8; ctx.fillStyle = '#000b'; ctx.fillRect(x - w / 2, y - 9, w, 18); ctx.fillStyle = col; ctx.fillText(t, x, y);
+}
+function drawRefs(p) {
+  const ctx = p.ctx;
+  for (const r of refsOf(p.name)) {
+    const active = r.id === activeRef, col = isFrame(p.name, r.id) ? '#4cc2ff' : active ? '#ffd24c' : '#ff8c4c';
+    const pts = r.pts.map(q => toScr(p, ...q));
+    const o = pts.length === 4 ? orderCorners(r.pts).map(q => toScr(p, ...q)) : pts;
+    ctx.lineWidth = active ? 2 : 1.5; ctx.strokeStyle = col;
+    if (o.length > 1) { ctx.beginPath(); o.forEach((q, i) => i ? ctx.lineTo(...q) : ctx.moveTo(...q)); if (o.length === 4) ctx.closePath(); ctx.stroke(); }
+    if (o.length === 4) {
+      const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      label(ctx, mid(o[0], o[1]), 'W ' + (r.w_mm ? fmt(r.w_mm) : '?'), col);
+      label(ctx, mid(o[3], o[0]), 'H ' + (r.h_mm ? fmt(r.h_mm) : '?'), col);
+      ['TL', 'TR', 'BR', 'BL'].forEach((t, i) => { ctx.fillStyle = col; ctx.fillText(t, o[i][0] + (i === 0 || i === 3 ? -14 : 14), o[i][1] + (i < 2 ? -12 : 12)); });
+      if (r.name) label(ctx, mid(mid(o[0], o[2]), mid(o[1], o[3])), r.name, col);
+    }
+    pts.forEach(q => dot(ctx, q, active ? 5 : 3.5, col));
+  }
+}
+function drawPairs(p, idx) {
+  const ctx = p.ctx, prs = pairsRec().pts;
+  prs.forEach((pr, i) => {
+    const q = pr[idx]; if (!q) return;
+    const s = toScr(p, ...q), col = pr[0] && pr[1] ? '#6bd48f' : '#ffd24c';
+    dot(ctx, s, 5, col);
+    ctx.font = '700 13px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#000'; ctx.fillText(i + 1, s[0] + 8, s[1] + 1); ctx.fillStyle = col; ctx.fillText(i + 1, s[0] + 7, s[1]);
+  });
+  // live preview: with 4+ pairs, show where the mouse point lands in the other photo
+  const H = pairH();
+  if (H && hover && hover.pane !== p) {
+    const src = toImg(hover.pane, hover.sx, hover.sy);
+    const [x, y] = toScr(p, ...applyH(idx === 1 ? H : inv3(H), src));
+    ctx.strokeStyle = '#ff4cd2'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - 12, y); ctx.lineTo(x + 12, y); ctx.moveTo(x, y - 12); ctx.lineTo(x, y + 12); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 18, 0, 7); ctx.stroke();
+  }
+}
+function drawMeasure(p) {
+  const ctx = p.ctx;
+  const pts = measure.slice(); if (pts.length === 1 && hover?.pane === p) pts.push(toImg(p, hover.sx, hover.sy));
+  if (!pts.length) return;
+  const s = pts.map(q => toScr(p, ...q));
+  ctx.strokeStyle = '#ff4cd2'; ctx.lineWidth = 2;
+  ctx.beginPath(); s.forEach((q, i) => i ? ctx.lineTo(...q) : ctx.moveTo(...q)); ctx.stroke();
+  s.forEach(q => dot(ctx, q, 4, '#ff4cd2'));
+  if (pts.length === 2) {
+    const mm = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) / p.ppm;
+    ctx.textAlign = 'left'; label(ctx, [s[1][0] + 45, s[1][1]], fmt(mm), '#ff4cd2');
+  }
+}
+function drawHud() {
+  const p = panes[0]; if (!p) return;
+  let t = '';
+  if (hover?.pane.img) {
+    const [x, y] = toImg(hover.pane, hover.sx, hover.sy);
+    t = hover.pane.ppm ? `${fmt(x / hover.pane.ppm - hover.pane.margin)}, ${fmt(y / hover.pane.ppm - hover.pane.margin)}` : `px ${x.toFixed(0)}, ${y.toFixed(0)}`;
+    t += '  ·  ';
+  }
+  t += pairMode ? 'Click a spot on the left, then the same spot on the right. Drag to adjust · Backspace removes last · pink cross = prediction from 4+ pairs'
+     : p.kind === 'photo' ? 'Click: add corner · drag: move corner · Backspace: remove last corner'
+     : 'Click two points to measure · Esc clears';
+  $('#hud').textContent = t + '  ·  right-drag or space: pan · wheel: zoom · F: fit';
+}
+function drawLoupe() {
+  if (!hover || !hover.pane.img || hover.pane.kind !== 'photo') { loupe.style.display = 'none'; return; }
+  const p = hover.pane;
+  loupe.style.display = 'block';
+  loupe.style.left = p === panes[0] && panes.length > 1 ? (p.el.offsetWidth - 190) + 'px' : '';
+  loupe.style.right = p === panes[0] && panes.length > 1 ? '' : '10px';
+  const [ix, iy] = toImg(p, hover.sx, hover.sy), z = 6, half = 90 / z;
+  lctx.imageSmoothingEnabled = false;
+  lctx.fillStyle = '#000'; lctx.fillRect(0, 0, 180, 180);
+  lctx.drawImage(p.img, ix - half, iy - half, half * 2, half * 2, 0, 0, 180, 180);
+  lctx.strokeStyle = '#ffd24c'; lctx.lineWidth = 1;
+  lctx.beginPath(); lctx.moveTo(90, 0); lctx.lineTo(90, 80); lctx.moveTo(90, 100); lctx.lineTo(90, 180);
+  lctx.moveTo(0, 90); lctx.lineTo(80, 90); lctx.moveTo(100, 90); lctx.lineTo(180, 90); lctx.stroke();
+}
+
+// ---------- interaction ----------
+function onDown(p, e) {
+  const [sx, sy] = local(p, e);
+  if (e.button === 2 || e.button === 1 || space) { drag = { pan: p, sx, sy, cx: p.cam.x, cy: p.cam.y }; return; }
+  if (!p.img) return;
+  const near = q => { const s = toScr(p, ...q); return Math.hypot(s[0] - sx, s[1] - sy) < 9; };
+
+  if (pairMode) {
+    const idx = panes.indexOf(p), prs = pairsRec().pts;
+    const hit = prs.findIndex(pr => pr[idx] && near(pr[idx]));
+    if (hit >= 0) { drag = { pair: prs[hit], idx, p }; return; }
+    let pr = prs.find(pr => !pr[idx] && pr[1 - idx]);          // finish a half-placed pair
+    if (!pr) { pr = [null, null]; prs.push(pr); }
+    pr[idx] = toImg(p, sx, sy); drag = { pair: pr, idx, p };
+    saveLabels(); renderSide(); drawAll(); return;
+  }
+  if (p.kind !== 'photo') {
+    if (p.ppm) { measure = measure.length >= 2 ? [toImg(p, sx, sy)] : [...measure, toImg(p, sx, sy)]; drawAll(); }
+    return;
+  }
+  for (const ref of refsOf(p.name)) {
+    const i = ref.pts.findIndex(near);
+    if (i >= 0) { activeRef = ref.id; drag = { ref, i, p }; renderSide(); return; }
+  }
+  let ref = refsOf(p.name).find(r => r.id === activeRef);
+  if (!ref || ref.pts.length >= 4) ref = newRef(p.name);
+  ref.pts.push(toImg(p, sx, sy)); drag = { ref, i: ref.pts.length - 1, p };
+  saveLabels(); renderSide(); drawAll();
+}
+window.addEventListener('mousemove', e => {
+  hover = null;
+  for (const p of panes) {
+    const [sx, sy] = local(p, e), r = p.canvas.getBoundingClientRect();
+    if (sx >= 0 && sy >= 0 && sx <= r.width && sy <= r.height) hover = { pane: p, sx, sy };
+  }
+  if (drag?.pan) { const [sx, sy] = local(drag.pan, e); drag.pan.cam.x = drag.cx + sx - drag.sx; drag.pan.cam.y = drag.cy + sy - drag.sy; }
+  else if (drag?.ref) drag.ref.pts[drag.i] = toImg(drag.p, ...local(drag.p, e));
+  else if (drag?.pair) drag.pair[drag.idx] = toImg(drag.p, ...local(drag.p, e));
+  drawAll();
+});
+window.addEventListener('mouseup', () => { if (drag && !drag.pan) { saveLabels(); renderSide(); } drag = null; });
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { space = true; e.preventDefault(); }
+  if (e.key === 'f' || e.key === 'F') { (hover ? [hover.pane] : panes).forEach(fit); drawAll(); }
+  if (e.key === 'Escape') { measure = []; drawAll(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (pairMode) { pairsRec().pts.pop(); }
+    else if (panes[0].kind === 'photo') { const ref = refsOf(panes[0].name).find(r => r.id === activeRef); ref?.pts.pop(); }
+    saveLabels(); renderSide(); drawAll();
+  }
+});
+window.addEventListener('keyup', e => { if (e.code === 'Space') space = false; });
+window.addEventListener('resize', resizeAll);
+
+// ---------- views ----------
+async function showPhoto(name) {
+  if (pairMode) exitPairs();
+  const p = panes[0];
+  await setPane(p, { kind: 'photo', name, title: name }, '/photo/' + encodeURIComponent(name));
+  activeRef = refsOf(name)[0]?.id ?? null; measure = [];
+  renderPhotos(); renderResults(); renderSide();
+}
+async function showResult(key) {
+  if (pairMode) exitPairs();
+  const r = results[key];
+  await setPane(panes[0], { kind: 'result', name: key, ppm: r.ppm || null, margin: r.margin || 0, title: r.title }, r.url);
+  measure = []; renderPhotos(); renderResults(); renderSide();
+}
+async function enterPairs() {
+  const rec = pairsRec();
+  if (!rec.target || !isAligned(rec.target)) rec.target = framePhoto();
+  pairMode = true; setPaneCount(2); fit(panes[0]);
+  await setPane(panes[1], { kind: 'photo', name: rec.target, title: 'Target: ' + rec.target }, '/photo/' + encodeURIComponent(rec.target));
+  fit(panes[1]); renderSide(); drawAll();
+}
+function exitPairs() { pairMode = false; setPaneCount(1); fit(panes[0]); renderSide(); drawAll(); }
+
+const newId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+function newRef(name) {
+  const ref = { id: newId(), name: '', pts: [], w_mm: null, h_mm: null, w_txt: '', h_txt: '' };
+  refsOf(name).push(ref); activeRef = ref.id;
+  if (!S.labels.frame) S.labels.frame = { photo: name, ref: ref.id };
+  return ref;
+}
+
+// ---------- side panels ----------
+function renderPhotos() {
+  const cur = panes[0]?.kind === 'photo' ? panes[0].name : null;
+  $('#photos').innerHTML = S.photos.map(p => {
+    const d = S.labels.photos[p.name] || {}, n = (d.refs || []).filter(r => r.pts.length === 4).length;
+    const tags = (framePhoto() === p.name ? '<span class="tag frame">frame</span>' : '') +
+      (d.align ? `<span class="tag ok">aligned</span>` : '') + (n ? `<span class="tag">${n} ref</span>` : '');
+    return `<div class="photo${cur === p.name ? ' sel' : ''}" data-name="${p.name}"><img loading="lazy" src="/photo/${encodeURIComponent(p.name)}"><div class="meta"><b>${p.name}</b>${p.w}×${p.h}<br>${tags}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.photo').forEach(el => el.onclick = () => showPhoto(el.dataset.name));
+}
+function renderResults() {
+  const names = { rectified: 'Rectified', mosaic: 'Mosaic', srcmap: 'Mosaic sources' };
+  const cur = panes[0]?.kind === 'result' ? panes[0].name : null;
+  $('#resultBtns').innerHTML = Object.keys(results).map(k =>
+    `<button data-k="${k}" class="${cur === k ? 'primary' : ''}">${names[k] || 'Overlay ' + k.slice(8, 12)}</button>`).join('') || '<span class="note">None yet.</span>';
+  document.querySelectorAll('#resultBtns button').forEach(b => b.onclick = () => showResult(b.dataset.k));
+}
+
+function renderSide() {
+  const p = panes[0], el = $('#side');
+  let h = `<div class="tabs"><button id="uMM" class="${unitIn ? '' : 'on'}">mm</button><button id="uIN" class="${unitIn ? 'on' : ''}">inch</button></div>`;
+  if (p.kind === 'photo' && !pairMode) {
+    const name = p.name, refs = refsOf(name);
+    h += `<h2>References on this photo</h2>
+      <p class="note">Click the 4 corners of a rectangle you know the size of. <b>W</b> is its top edge and <b>H</b> its left edge as they appear in this photo. Lengths accept <code>12in</code>, <code>3 1/2in</code>, <code>30cm</code>… The ◉ reference is the <b>frame</b>: it sets the mm coordinates for everything.</p>`;
+    h += refs.map(r => `
+      <div class="ref ${r.id === activeRef ? 'active' : ''}" data-id="${r.id}">
+        <div class="head">
+          <button class="icon frameBtn" title="Use as frame">${isFrame(name, r.id) ? '◉' : '◎'}</button>
+          <input class="nm" placeholder="name, e.g. drawer floor" value="${r.name || ''}">
+          <button class="icon del" title="Delete">✕</button>
+        </div>
+        <div class="row">
+          <div><label>W (top edge)</label><input class="w" value="${r.w_txt ?? ''}" placeholder="width"></div>
+          <div><label>H (left edge)</label><input class="h" value="${r.h_txt ?? ''}" placeholder="height"></div>
+        </div>
+        <div class="note" style="margin-top:4px">${r.pts.length}/4 corners${r.w_mm ? ' · ' + fmt(r.w_mm) : ''}${r.h_mm ? ' × ' + fmt(r.h_mm) : ''}${isFrame(name, r.id) ? ' · <b>frame</b>' : ''}</div>
+        ${(r.w_mm && r.w_mm < 50) || (r.h_mm && r.h_mm < 50) ? `<div class="note warn">⚠ Only ${fmt(r.w_mm)} × ${fmt(r.h_mm)}. Did you mean inches? Type <code>${r.w_txt}in</code> or switch to inch above and retype.</div>` : ''}
+        <div class="btns"><button class="rect" ${r.pts.length === 4 && r.w_mm && r.h_mm ? '' : 'disabled'}>Rectify with this</button></div>
+      </div>`).join('');
+    h += `<div class="btns"><button id="addRef">+ New reference</button></div>`;
+
+    h += `<h2>Alignment</h2>`;
+    if (name === framePhoto()) h += `<p class="note">This is the frame photo. Other photos are matched onto it.</p>`;
+    else {
+      const a = P(name).align, np = completePairs().length;
+      h += a ? `<p class="note"><span class="ok">Aligned</span> at ${a.when} via ${short(a.via)} using ${a.how}: ${a.inliers} of ${a.matches} agree, RMS ${a.rms_px} px${a.pair_rms_px != null ? `, pairs off by ${a.pair_rms_px} px` : ''}.</p>`
+             : `<p class="note">Not aligned yet.</p>`;
+      if (a?.tried) h += `<p class="note">Tried: ${a.tried}</p>`;
+      h += `<div class="btns"><button id="align" ${frameReady() ? '' : 'disabled'}>${np >= 4 ? `Align using ${np} pairs` : 'Auto-align'}</button>
+            <button id="pairs" ${frameReady() ? '' : 'disabled'}>Point pairs (${np})</button>${a ? '<button id="unalign">Forget</button>' : ''}</div>`;
+    }
+  } else if (pairMode) {
+    const rec = pairsRec(), np = completePairs().length;
+    const targets = S.photos.map(q => q.name).filter(n => n !== p.name && isAligned(n));
+    h += `<h2>Point pairs</h2>
+      <p class="note">Click a distinctive spot on the <b>left</b> photo, then the same spot on the <b>right</b>. Use points <b>on the foam surface</b> (the base of a socket, a scratch, a foam mark), not the tops of tall tools. Spread them out: 4 minimum, 6–10 is better. After 4, a pink cross predicts each point.</p>
+      <label class="note">Target photo (must be aligned)</label>
+      <select id="target">${targets.map(n => `<option ${n === rec.target ? 'selected' : ''} value="${n}">${n}${n === framePhoto() ? ' (frame)' : ''}</option>`).join('')}</select>
+      <p class="note">${np} complete pair${np === 1 ? '' : 's'}${rec.pts.length > np ? ', 1 waiting for its partner' : ''}.</p>
+      <div class="btns"><button id="align" class="primary" ${np >= 4 ? '' : 'disabled'}>Align using ${np} pairs</button>
+      <button id="clearPairs">Clear pairs</button><button id="donePairs">Done</button></div>`;
+  } else {
+    const r = results[p.name];
+    h += `<h2>${r.title}</h2><p class="note">Click two points to measure. Esc clears.</p>`;
+    if (r.checks?.length) {
+      h += `<h2>Reference check</h2><table><tr><th>ref</th><th>typed</th><th>measured</th><th>Δ mm</th></tr>` +
+        r.checks.map(c => {
+          const dw = c.measured[0] - c.typed[0], dh = c.measured[1] - c.typed[1], e = Math.max(Math.abs(dw), Math.abs(dh));
+          return `<tr><td>${c.name}<br><span class="note">${short(c.photo)}</span></td><td>${fmt(c.typed[0])}<br>${fmt(c.typed[1])}</td><td>${fmt(c.measured[0])}<br>${fmt(c.measured[1])}</td><td class="${e < 1 ? 'ok' : e < 3 ? 'warn' : 'bad'}">${dw.toFixed(1)}<br>${dh.toFixed(1)}</td></tr>`;
+        }).join('') + `</table><p class="note">The frame reference always matches exactly. Label a second known rectangle (in any photo) to test how accurate the result really is.</p>`;
+    }
+    if (r.native_ppm) h += `<p class="note">Preview: ${r.px[0]}×${r.px[1]} px at ${r.ppm.toFixed(1)} px/mm (${(r.ppm * 25.4).toFixed(0)} dpi). Sharpest photo holds ${r.native_ppm} px/mm.</p>`;
+    if (r.used) h += `<h2>Photos used</h2>` + r.used.map((n, i) => `<div><span class="tag dot" style="background:${r.colors[i % r.colors.length]}"></span> ${n}</div>`).join('');
+  }
+
+  h += `<h2>Build</h2>
+    <div class="kv"><label>Resolution</label><span><input id="ppm" value="${localStorage.hl_ppm || 'auto'}"> px/mm</span>
+    <label>Margin</label><span><input id="margin" value="${localStorage.hl_margin || 20}"> mm</span></div>
+    <div class="btns"><button id="alignAll" ${frameReady() ? '' : 'disabled'}>Auto-align all</button>
+    <button id="mosaic" class="primary" ${frameReady() ? '' : 'disabled'}>Build mosaic</button></div>
+    <p class="note">Resolution <code>auto</code> uses the most detail your photos hold (the sharpest close-up). Margin is extra room around the frame rectangle (negative crops inside it).</p>
+    <h2>Export full quality</h2>
+    <div class="btns"><button class="exp" data-fmt="png" ${frameReady() ? '' : 'disabled'}>PNG</button>
+    <button class="exp" data-fmt="jpg" ${frameReady() ? '' : 'disabled'}>JPG</button></div>
+    <div class="btns" style="align-items:center"><select id="paper" style="width:auto">${['letter', 'a4', 'legal', 'tabloid'].map(x => `<option ${x === (localStorage.hl_paper || 'letter') ? 'selected' : ''}>${x}</option>`).join('')}</select>
+    <button class="exp" data-fmt="pdf" ${frameReady() ? '' : 'disabled'}>Print PDF (1:1, tiled)</button></div>
+    <p class="note">Images carry their DPI, so printing at 100% (no "fit to page") gives true size. The PDF splits the drawer over sheets with 10 mm overlap and a 50 mm scale bar on each page to check the printer didn't scale it.</p>`;
+  el.innerHTML = h;
+  wireSide();
+}
+
+function wireSide() {
+  const p = panes[0], on = (id, fn) => { const b = document.getElementById(id); if (b) b.onclick = fn; };
+  on('uMM', () => { unitIn = false; localStorage.hl_unit = 'mm'; renderSide(); drawAll(); });
+  on('uIN', () => { unitIn = true; localStorage.hl_unit = 'in'; renderSide(); drawAll(); });
+  $('#ppm').onchange = e => localStorage.hl_ppm = e.target.value;
+  $('#margin').onchange = e => localStorage.hl_margin = e.target.value;
+  const opts = () => ({ ppm: parseFloat($('#ppm').value) || 'auto', margin: parseLen($('#margin').value) ?? 20 });
+  $('#paper').onchange = e => localStorage.hl_paper = e.target.value;
+  document.querySelectorAll('.exp').forEach(b => b.onclick = () => exportFile(b.dataset.fmt, { ...opts(), paper: $('#paper').value }));
+
+  document.querySelectorAll('.ref').forEach(box => {
+    const ref = refsOf(p.name).find(r => r.id === box.dataset.id);
+    box.addEventListener('mousedown', () => { if (activeRef !== ref.id) { activeRef = ref.id; document.querySelectorAll('.ref').forEach(b => b.classList.toggle('active', b === box)); drawAll(); } });
+    box.querySelector('.nm').oninput = e => { ref.name = e.target.value; saveLabels(); drawAll(); };
+    for (const k of ['w', 'h']) box.querySelector('.' + k).onchange = e => { ref[k + '_txt'] = e.target.value; ref[k + '_mm'] = parseLen(e.target.value); saveLabels(); renderSide(); drawAll(); };
+    box.querySelector('.frameBtn').onclick = () => { S.labels.frame = { photo: p.name, ref: ref.id }; saveLabels(); renderPhotos(); renderSide(); drawAll(); };
+    box.querySelector('.del').onclick = () => {
+      const refs = refsOf(p.name); refs.splice(refs.indexOf(ref), 1);
+      if (isFrame(p.name, ref.id)) S.labels.frame = null;
+      activeRef = refs[0]?.id ?? null; saveLabels(); renderPhotos(); renderSide(); drawAll();
+    };
+    box.querySelector('.rect').onclick = async () => {
+      await flush();
+      const r = await busy('Rectifying', () => api('/api/rectify', { photo: p.name, ref: ref.id, ...opts() }));
+      results.rectified = { ...r, title: `Rectified: ${ref.name || 'reference'} on ${short(p.name)}` };
+      showResult('rectified');
+    };
+  });
+  on('addRef', () => { newRef(p.name); saveLabels(); renderSide(); });
+  on('align', async () => { const n = p.name; await alignPhoto(n); if (pairMode) exitPairs(); showResult('overlay_' + n); });
+  on('pairs', enterPairs);
+  on('donePairs', exitPairs);
+  on('clearPairs', () => { pairsRec().pts = []; saveLabels(); renderSide(); drawAll(); });
+  const tgt = $('#target');
+  if (tgt) tgt.onchange = async () => {
+    const rec = pairsRec();
+    if (rec.pts.length && !confirmSwitch()) { tgt.value = rec.target; return; }
+    rec.target = tgt.value; rec.pts = []; saveLabels(); await enterPairs();
+  };
+  on('unalign', async () => { await api('/api/unalign', { photo: p.name }); delete P(p.name).align; renderPhotos(); renderSide(); });
+  on('alignAll', async () => {
+    // several passes, so photos that only overlap other close-ups can chain through them
+    const base = framePhoto(); let fails = {};
+    for (let pass = 0; pass < S.photos.length; pass++) {
+      let progress = false; fails = {};
+      for (const q of S.photos) {
+        if (q.name === base || P(q.name).align) continue;
+        try { await alignPhoto(q.name); progress = true; } catch (e) { fails[q.name] = e.message; }
+      }
+      if (!progress) break;
+    }
+    const f = Object.entries(fails);
+    banner(f.length ? `⚠ Not aligned: ${f.map(([n]) => short(n)).join(', ')}. Open each and place point pairs.` : 'All photos aligned. Check the overlays under Results.');
+  });
+  on('mosaic', async () => {
+    await flush();
+    const r = await busy('Building mosaic', () => api('/api/mosaic', opts()));
+    results.mosaic = { ...r, title: 'Mosaic (top-down, mm)' };
+    results.srcmap = { ...r, url: r.srcmap, title: 'Mosaic: which photo each area came from' };
+    showResult('mosaic');
+  });
+}
+async function exportFile(fmt, o) {
+  await flush();
+  const q = new URLSearchParams({ fmt, ppm: o.ppm, margin: o.margin, paper: o.paper });
+  await busy(`Rendering full-quality ${fmt.toUpperCase()} (can take 20–40 s)`, async () => {
+    const r = await fetch('/api/export?' + q);
+    if (!r.ok) { const t = await r.text(), m = t.match(/<p>(.*?)<\/p>/s); throw new Error(m ? m[1] : t.slice(0, 200)); }
+    const name = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)/)?.[1] || 'mosaic.' + fmt;
+    const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  });
+  banner('Saved to your Downloads folder.');
+}
+// switching target discards pairs; ask without a blocking dialog
+let switchArmed = 0;
+function confirmSwitch() {
+  if (Date.now() - switchArmed < 4000) return true;
+  switchArmed = Date.now(); banner('Changing the target clears the current pairs. Pick it again to confirm.'); return false;
+}
+
+async function alignPhoto(name) {
+  await flush();
+  const r = await busy('Aligning ' + short(name), () => api('/api/align', { photo: name }));
+  const { overlay, ...info } = r;
+  P(name).align = info;
+  results['overlay_' + name] = { url: overlay, title: `Overlay: ${short(name)} on frame photo · ${r.how} · ${r.inliers} agree · RMS ${r.rms_px}px` };
+  renderPhotos(); renderResults(); renderSide();
+}
+
+// ---------- boot ----------
+(async () => {
+  unitIn = localStorage.hl_unit === 'in';
+  setPaneCount(1);
+  S = await api('/api/state');
+  S.labels.photos ??= {};
+  $('#photodir').textContent = S.photo_dir;
+  renderPhotos(); renderResults();
+  const first = framePhoto() || S.photos[0]?.name;
+  if (first) showPhoto(first); else renderSide();
+})();
+</script>
+</body>
+</html>

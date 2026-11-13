@@ -22,7 +22,7 @@ PACKAGE_FORMAT = "foam-insert-maker"
 PACKAGE_FILES = ("original_full.jpg", "original.jpg", "rectified.jpg")  # plus project.json
 
 DEFAULT_SETTINGS = {
-    "default_buffer_mm": 1.0,
+    "default_buffer_mm": 0.0,
     "grip_auto": False,       # give new cutouts a finger grip
     "grip_d_mm": 20.0,
     "grip_at": "edge",        # where new grips go: edge | center
@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     "joint": "jigsaw",        # jigsaw | dovetail | straight
     "tab_mm": 12.0,
     "tab_spacing_mm": 100.0,
+    "kerf_mm": 0.6,           # laser beam width; seams are widened by half of it on each piece
     "nx": 0,                  # 0 = automatic
     "ny": 0,
     "tile_basis": "initial",  # initial = seams laid out over the calibrated sheet; current = the resized sheet
@@ -435,7 +436,7 @@ def settings(pid):
     if "grid_origin" in a:
         o = a["grid_origin"]
         s["grid_origin"] = [num(o[0]), num(o[1])] if isinstance(o, list) and len(o) == 2 else None
-    for k in ("default_buffer_mm", "grip_d_mm", "bed_w", "bed_h", "tab_mm", "tab_spacing_mm"):
+    for k in ("default_buffer_mm", "grip_d_mm", "bed_w", "bed_h", "tab_mm", "tab_spacing_mm", "kerf_mm"):
         if k in a and a[k] is not None:
             s[k] = num(a[k], s[k])
     for k in ("nx", "ny"):
@@ -456,6 +457,7 @@ def settings(pid):
     s["bed_w"], s["bed_h"] = max(s["bed_w"], 10), max(s["bed_h"], 10)
     s["tab_mm"], s["tab_spacing_mm"] = max(s["tab_mm"], 2), max(s["tab_spacing_mm"], 10)
     s["grip_d_mm"] = max(s["grip_d_mm"], 2)
+    s["kerf_mm"] = min(max(s["kerf_mm"], 0), 10)
 
     if p["sheet"]:
         sh = p["sheet"]
@@ -482,7 +484,7 @@ def tiles(pid):
     p = load(pid)
     if not p["sheet"]:
         return jsonify(tiles=[], nx=0, ny=0)
-    layout, ts = geometry.build_tiles(tile_base(p), p["sheet"], None, p["settings"])
+    layout, ts = geometry.build_tiles(tile_base(p), p["sheet"], None, p["settings"], kerf=False)
     out = []
     for t in ts:
         minx, miny, maxx, maxy = t["geom"].bounds

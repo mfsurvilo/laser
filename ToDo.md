@@ -33,6 +33,8 @@ _(nothing yet)_
 - [x] Shiny tools: Smart select (GrabCut box + marks), Colour key background mode, Brush add/erase.
 - [x] Freehand trace tool that continues from where the last stroke ended.
 - [x] Finger grips at the edge or the centre of the tool (setting + Edit dialog buttons).
+- [x] Tug grabs a point on the outline (reach measured along the outline, no tangles); Smooth / straighten a stretch.
+- [x] Laser kerf setting for split sheets (tight joints, full-length cutouts across seams); defaults kerf 0.6 mm, buffer 0 mm.
 
 ## Ideas (not started)
 

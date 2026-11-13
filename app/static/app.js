@@ -20,7 +20,9 @@ const S = {
   arrange: false,
   live: null,         // uncommitted move/rotate: {k, id, ddx, ddy, drot, cx, cy}
   liveGrip: null,     // {num, idx, pt}
-  tug: null,          // {kind: "preview"|"cut", i|num, base, grab, pts}
+  tug: null,          // {kind: "preview"|"cut", i|num, base, w, grabIdx, grab, pts}
+  sect: null,         // outline stretch being smoothed/straightened: {kind, i|num, pts, s0, D, sec, res}
+  sectMode: "smooth", // smooth | straight
   pickOrigin: false,  // next click sets the grid origin
   shape: null,        // exact circle/rectangle preview: {kind, c, r | w, h, pts}
   hidden: new Set(),  // cutout numbers hidden from view while editing (still exported)
@@ -108,7 +110,7 @@ const P = (path) => `/api/p/${S.p.id}${path}`;
 
 function setProject(p) {
   S.p = p;
-  S.live = null; S.liveGrip = null; S.tug = null;
+  S.live = null; S.liveGrip = null; S.tug = null; S.sect = null;
   if (S.sel && !findSel()) S.sel = null;
   $("#pname").textContent = p.name;
   $("#empty").style.display = "none";
@@ -436,12 +438,8 @@ function draw() {
       ctx.lineWidth = 1; ctx.strokeStyle = S.brushErase ? "rgba(255,120,120,.9)" : "rgba(255,255,255,.8)"; ctx.stroke();
     }
   }
-  // tug radius
-  if (S.mode === "trace" && S.tool === "tug" && S.hover && !S.measuring) {
-    const [x, y] = mmToScreen(S.tug ? S.tug.grab : S.hover);
-    ctx.beginPath(); ctx.arc(x, y, +$("#s-tug").value / mmPerScreenPx(), 0, Math.PI * 2);
-    ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.stroke();
-  }
+  // tug grab point, section being smoothed/straightened
+  drawOutlineTools();
 
   // measurement
   if (S.measure) {
@@ -559,7 +557,7 @@ window.addEventListener("mousemove", (e) => {
   cv.style.cursor = (drag && drag.type === "shapeMove") || (!drag && S.hover && overShape(mm)) ? "move" : "";
   if (S.measure && !S.measure.done) S.measure.b = snapPt(mm, e);
   if (drag) dragMove(mm, sx, sy, e);
-  if (S.measure || S.draft.length || S.tool === "tug" || S.tool === "brush" || drag) draw();
+  if (S.measure || S.draft.length || S.tool === "tug" || S.tool === "section" || S.tool === "brush" || drag) draw();
 });
 
 window.addEventListener("mouseup", async () => {
@@ -673,12 +671,9 @@ function dragMove(mm, sx, sy, e) {
     const c = snapPt([drag.c0[0] + mm[0] - drag.start[0], drag.c0[1] + mm[1] - drag.start[1]], e);
     setShape({ ...S.shape, c });
   } else if (drag.type === "tug") {
-    const T = S.tug, R = +$("#s-tug").value;
-    const dx = mm[0] - T.grab[0], dy = mm[1] - T.grab[1];
-    T.pts = T.base.map(([x, y]) => {
-      const w = Math.max(0, 1 - (Math.hypot(x - T.grab[0], y - T.grab[1]) / R) ** 2) ** 2;
-      return [x + w * dx, y + w * dy];
-    });
+    tugMove(mm);
+  } else if (drag.type === "sect") {
+    sectMove(mm);
   }
 }
 
@@ -720,13 +715,9 @@ async function dragEnd(d) {
     await applyBrush(S.stroke);
     S.stroke = null; draw();
   } else if (d.type === "tug") {
-    const T = S.tug;
-    if (T.kind === "preview") {
-      S.preview[T.i] = T.pts; S.tug = null; draw();
-    } else {
-      const c = cutByNum(T.num);
-      await change("PATCH", `/cutouts/${c.num}`, { raw: unplace(T.pts, c) });
-    }
+    await tugEnd();
+  } else if (d.type === "sect") {
+    sectEnd();
   }
 }
 
@@ -794,6 +785,7 @@ window.addEventListener("keydown", (e) => {
     else if (k) { e.preventDefault(); nudge(...k); }
   }
   if (S.mode !== "trace") return;
+  if (S.sect && !drag && (e.key === "Enter" || e.key === "Escape")) return e.key === "Enter" ? sectApply() : sectCancel();
   if (e.key === "Enter") { if (S.draft.length >= 3) finishDraft(); addPreview(); }
   if (e.key === "Escape") clearPreview();
   if (e.key === "Backspace" && S.draft.length) {
@@ -899,7 +891,8 @@ const TOOL_HINTS = {
   threshold: "Click on a tool. Slide Threshold until the dark/light split matches. Extra clicks add more.",
   background: "Click on empty foam/background. Every object inside the sheet is found at once.",
   draw: "Click points around the tool. Click the first point or double-click to close. Backspace undoes.",
-  tug: "Drag an outline (preview or cutout) to push or pull it. The circle shows how much moves.",
+  tug: "Press on an outline (preview or cutout) and drag to push or pull it. Near a corner it grabs that corner. The yellow stretch is what moves; Reach 0 moves just the one point.",
+  section: "Drag along an outline (preview or cutout) to pick a stretch, then smooth it or make it a straight line. Ends snap to corners. Enter applies, Esc cancels.",
   smart: "Drag a box around one tool. Then click on missed bits of the tool, or Alt+click on background it grabbed. Enter adds it.",
   colorkey: "Click the background (best with a coloured background). Click more spots to add shades of it. Every object inside the sheet is found.",
   freehand: "Drag to trace the outline. Let go to pan or zoom, then drag again: it carries on from where you stopped. Enter or double-click closes it; Backspace removes the last stroke.",
@@ -910,6 +903,7 @@ const TOOL_HINTS = {
 function setTool(t) {
   S.tool = t;
   if (t !== "smart") S.smart = null;
+  S.sect = null;
   S.strokes = [];
   $$(".tools button").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
   $$("[data-for]").forEach((s) => (s.style.display = s.dataset.for.split(" ").includes(t) ? "" : "none"));
@@ -947,25 +941,238 @@ function traceDown(mm, sx, sy, e) {
     S.draft.push(mm); draw(); return;
   }
   if (S.tool === "tug") return tugDown(mm);
+  if (S.tool === "section") return sectDown(mm);
   if (S.tool === "background") S.seeds = [mm];  // colour key: every click adds a background shade
   else S.seeds.push(mm);  // wand/threshold: every click adds to the selection
   runDetect();
 }
-function tugDown(mm) {
-  const R = +$("#s-tug").value;
+// ---- outline editing (tug, section): positions along an outline are arc lengths from vertex 0
+const SNAP_PX = 12;   // how close (screen px) a press must be to grab an outline
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+function arcCum(pts) {
+  const cum = [0];
+  pts.forEach((p, i) => cum.push(cum[i] + dist(p, pts[(i + 1) % pts.length])));
+  return cum;  // cum[n] = perimeter
+}
+const wrapS = (s, L) => ((s % L) + L) % L;
+const circDist = (a, b, L) => { const d = Math.abs(a - b) % L; return Math.min(d, L - d); };
+function pointAt(pts, cum, s) {
+  const n = pts.length, L = cum[n];
+  s = wrapS(s, L);
+  let i = 0;
+  while (i < n - 1 && cum[i + 1] <= s) i++;
+  const a = pts[i], b = pts[(i + 1) % n], seg = cum[i + 1] - cum[i] || 1e-9, t = (s - cum[i]) / seg;
+  return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+}
+function paramOf(pts, cum, p) {
+  const near = nearestOnPoly(p, pts);
+  return cum[near.i] + dist(pts[near.i], near.pt);
+}
+// the stretch from s to s + len (len >= 0), with the original vertices in between
+function arcSlice(pts, cum, s, len) {
+  const L = cum[pts.length], inner = [];
+  pts.forEach((p, i) => { const d = wrapS(cum[i] - s, L); if (d > 1e-6 && d < len - 1e-6) inner.push([d, p]); });
+  inner.sort((a, b) => a[0] - b[0]);
+  return [pointAt(pts, cum, s), ...inner.map(([, p]) => p), pointAt(pts, cum, s + len)];
+}
+// evenly spaced points along an open polyline, both ends included
+function resampleOpen(pts, step) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i], pts[i - 1]));
+  const len = cum[cum.length - 1], n = Math.max(1, Math.round(len / step)), out = [];
+  let j = 0;
+  for (let k = 0; k <= n; k++) {
+    const s = (len * k) / n;
+    while (j < pts.length - 2 && cum[j + 1] < s) j++;
+    const seg = cum[j + 1] - cum[j] || 1e-9, t = Math.min(1, (s - cum[j]) / seg);
+    out.push([pts[j][0] + t * (pts[j + 1][0] - pts[j][0]), pts[j][1] + t * (pts[j + 1][1] - pts[j][1])]);
+  }
+  return out;
+}
+// nearest preview or visible cutout outline to mm, within SNAP_PX: {kind, i | num, pts, near}
+function pickOutline(mm) {
+  const tol = SNAP_PX * mmPerScreenPx();
   let best = null;
-  S.preview.forEach((pp, i) => {
-    const d = nearestOnPoly(mm, pp).d;
-    if (d < R && (!best || d < best.d)) best = { d, kind: "preview", i, pts: pp };
+  const consider = (pts, t) => {
+    const near = nearestOnPoly(mm, pts);
+    if (near.d < tol && (!best || near.d < best.near.d)) best = { ...t, pts, near };
+  };
+  S.preview.forEach((pp, i) => consider(pp, { kind: "preview", i }));
+  visibleCuts().forEach((c) => consider(c.placed, { kind: "cut", num: c.num }));
+  return best;
+}
+// arc position s, moved onto a corner vertex when one is close on screen
+function snapParam(pts, cum, s) {
+  const p = pointAt(pts, cum, s);
+  let bi = -1, bd = HANDLE * mmPerScreenPx();
+  pts.forEach((q, i) => { const d = dist(p, q); if (d < bd) { bd = d; bi = i; } });
+  return bi < 0 ? s : cum[bi];
+}
+async function commitOutline(t, pts) {
+  if (pts.length < 3) return;
+  if (t.kind === "preview") {
+    if (S.shape && S.preview[t.i] === S.shape.pts) S.shape = null;  // no longer the exact shape
+    S.preview[t.i] = pts;
+    draw();
+  } else {
+    const c = cutByNum(t.num);
+    if (c) await change("PATCH", `/cutouts/${c.num}`, { raw: unplace(pts, c) });
+  }
+}
+
+// tug: grab one point on the outline and drag it. Neighbours within the reach (measured along the
+// outline, so the far side of a thin tool never moves) follow with a smooth falloff.
+function tugDown(mm) {
+  const t = pickOutline(mm);
+  if (!t) return status("#trace-status", "Tug: press right on an outline (a yellow dot shows when you're close).");
+  const R = +$("#s-tug").value;
+  let pts = t.pts, gi = [t.near.i, (t.near.i + 1) % pts.length].find((i) => nearScreen(pts[i], t.near.pt));
+  if (gi === undefined) {  // no corner there: add a point where the press landed
+    pts = [...pts.slice(0, t.near.i + 1), t.near.pt, ...pts.slice(t.near.i + 1)];
+    gi = t.near.i + 1;
+  }
+  // add points along the stretch that moves, so it bends smoothly
+  const cum = arcCum(pts), L = cum[pts.length], s0 = cum[gi], step = Math.max(0.25, Math.min(1, R / 8));
+  const base = [];
+  let grabIdx = 0;
+  pts.forEach((a, i) => {
+    if (i === gi) grabIdx = base.length;
+    base.push(a);
+    const b = pts[(i + 1) % pts.length], seg = cum[i + 1] - cum[i];
+    if (R > 0 && Math.min(circDist(cum[i], s0, L), circDist(cum[i + 1], s0, L)) <= R + seg) {
+      const n = Math.ceil(seg / step);
+      for (let k = 1; k < n; k++) base.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+    }
   });
-  visibleCuts().forEach((c) => {
-    const d = nearestOnPoly(mm, c.placed).d;
-    if (d < R && (!best || d < best.d)) best = { d, kind: "cut", num: c.num, pts: c.placed };
+  const bc = arcCum(base), bL = bc[base.length], bs0 = bc[grabIdx];
+  const w = base.map((_, j) => {
+    const d = circDist(bc[j], bs0, bL);
+    return R > 0 ? Math.max(0, 1 - (d / R) ** 2) ** 2 : (j === grabIdx ? 1 : 0);
   });
-  if (!best) return status("#trace-status", "Tug: start the drag closer to an outline.");
-  const base = resample(best.pts, Math.min(1, R / 6));
-  S.tug = { kind: best.kind, i: best.i, num: best.num, base, pts: base, grab: mm };
+  S.tug = { ...t, base, w, grabIdx, pts: base, grab: base[grabIdx], at: mm };
   drag = { type: "tug" };
+  draw();
+}
+function tugMove(mm) {
+  const T = S.tug, dx = mm[0] - T.at[0], dy = mm[1] - T.at[1];
+  T.pts = T.base.map(([x, y], j) => [x + T.w[j] * dx, y + T.w[j] * dy]);
+  T.grab = T.pts[T.grabIdx];
+}
+async function tugEnd() {
+  const T = S.tug;
+  S.tug = null;
+  if (T && T.pts !== T.base) await commitOutline(T, T.pts);
+  draw();
+}
+
+// section: drag along an outline to pick a stretch, then smooth it or replace it with a straight line
+function sectDown(mm) {
+  const t = pickOutline(mm);
+  if (!t) { S.sect = null; draw(); return status("#trace-status", "Press on an outline and drag along it."); }
+  const cum = arcCum(t.pts), s0 = snapParam(t.pts, cum, paramOf(t.pts, cum, mm));
+  S.sect = { ...t, cum, L: cum[t.pts.length], s0, D: 0, Dsnap: 0, last: s0 };
+  drag = { type: "sect" };
+  draw();
+}
+function sectMove(mm) {
+  const X = S.sect, s = paramOf(X.pts, X.cum, mm);
+  // follow the pointer along the outline, so the stretch can go either way and past the start point
+  let d = s - X.last;
+  if (d > X.L / 2) d -= X.L; else if (d < -X.L / 2) d += X.L;
+  X.last = s;
+  X.D = Math.max(-X.L + 1, Math.min(X.L - 1, X.D + d));
+  const end = X.s0 + X.D;
+  X.Dsnap = X.D + wrapS(snapParam(X.pts, X.cum, end) - end + X.L / 2, X.L) - X.L / 2;
+  sectCompute();
+}
+function sectEnd() {
+  if (!S.sect || !S.sect.res) { S.sect = null; draw(); return; }
+  status("#trace-status", "Adjust it, then Enter (or Apply) to keep it. Esc cancels.");
+  draw();
+}
+// smooth ring[1..n-1] (the section; ring[0] and ring[n] are its ends), using neighbours on both sides
+function gaussSmooth(ring, n, sigma) {
+  const M = ring.length, K = Math.ceil(3 * sigma), g = [];
+  for (let k = -K; k <= K; k++) g.push(Math.exp(-(k * k) / (2 * sigma * sigma)));
+  const out = [ring[0]];
+  for (let i = 1; i < n; i++) {
+    let x = 0, y = 0, W = 0;
+    for (let k = -K; k <= K; k++) {
+      const q = ring[(((i + k) % M) + M) % M];
+      x += g[k + K] * q[0]; y += g[k + K] * q[1]; W += g[k + K];
+    }
+    out.push([x / W, y / W]);
+  }
+  out.push(ring[n]);
+  return out;
+}
+function sectCompute() {
+  const X = S.sect, D = X.Dsnap, len = Math.abs(D);
+  if (len < 0.5) { X.sec = X.res = null; return; }
+  const a = D > 0 ? X.s0 : X.s0 + D;
+  const sec = arcSlice(X.pts, X.cum, a, len), rest = arcSlice(X.pts, X.cum, a + len, X.L - len);
+  let neu;
+  if (S.sectMode === "straight") {
+    neu = [sec[0], sec[sec.length - 1]];
+  } else {
+    const lvl = +$("#s-sect").value, h = Math.max(0.25, Math.min(lvl / 4, len / 400));
+    const rs = resampleOpen(sec, h), n = rs.length - 1;
+    const sm = gaussSmooth([...rs, ...resampleOpen(rest, h).slice(1, -1)], n, lvl / h);
+    // ease in from each end so the smoothed stretch joins the untouched outline without a kink
+    const ramp = Math.min(lvl, len / 2);
+    neu = rs.map((p, i) => {
+      const e = (Math.min(i, n - i) * h) / ramp, t = e >= 1 ? 1 : e * e * (3 - 2 * e);
+      return [p[0] + t * (sm[i][0] - p[0]), p[1] + t * (sm[i][1] - p[1])];
+    });
+  }
+  X.sec = sec;
+  X.res = [...neu, ...rest.slice(1, -1)];
+}
+async function sectApply() {
+  const X = S.sect;
+  if (!X || !X.res) return;
+  S.sect = null;
+  await commitOutline(X, X.res);
+  status("#trace-status", X.kind === "preview" ? "Done. Pick another stretch, or Enter to add the cutout." : "Done (Ctrl+Z undoes it).");
+  draw();
+}
+function sectCancel() { S.sect = null; status("#trace-status", ""); draw(); }
+function setSectMode(m) {
+  S.sectMode = m;
+  $("#sc-smooth").classList.toggle("active", m === "smooth"); $("#sc-straight").classList.toggle("active", m === "straight");
+  $("#sect-level").style.display = m === "smooth" ? "" : "none";
+  if (S.sect) { sectCompute(); draw(); }
+}
+$("#sc-smooth").onclick = () => setSectMode("smooth");
+$("#sc-straight").onclick = () => setSectMode("straight");
+$("#sect-apply").onclick = sectApply;
+$("#sect-cancel").onclick = sectCancel;
+function drawOutlineTools() {
+  if (S.mode !== "trace" || S.measuring) return;
+  const hot = (pts) => { poly(pts, mmToScreen, false); ctx.lineWidth = 5; ctx.strokeStyle = "rgba(255,212,0,.8)"; ctx.stroke(); };
+  if (S.tool === "tug") {
+    if (S.tug) return handle(mmToScreen(S.tug.grab), "#ffd400");
+    const t = S.hover && pickOutline(S.hover);
+    if (!t) return;
+    const R = +$("#s-tug").value, cum = arcCum(t.pts), s = paramOf(t.pts, cum, t.near.pt);
+    if (R > 0) hot(arcSlice(t.pts, cum, s - R, Math.min(2 * R, cum[t.pts.length] - 0.01)));
+    const v = [t.near.i, (t.near.i + 1) % t.pts.length].find((i) => nearScreen(t.pts[i], t.near.pt));
+    handle(mmToScreen(v === undefined ? t.near.pt : t.pts[v]), "#ffd400");
+  }
+  if (S.tool === "section") {
+    const X = S.sect;
+    if (X && X.sec) {
+      hot(X.sec);
+      poly(X.res, mmToScreen); ctx.lineWidth = 2; ctx.strokeStyle = "#35d0ff"; ctx.stroke();
+      handle(mmToScreen(X.sec[0]), "#35d0ff"); handle(mmToScreen(X.sec[X.sec.length - 1]), "#35d0ff");
+    } else if (!drag) {
+      const t = S.hover && pickOutline(S.hover);
+      if (t) {
+        const cum = arcCum(t.pts);
+        handle(mmToScreen(pointAt(t.pts, cum, snapParam(t.pts, cum, paramOf(t.pts, cum, t.near.pt)))), "#35d0ff");
+      }
+    }
+  }
 }
 // exact shapes
 // the circle/rectangle waiting to be added, if the point is on it
@@ -1071,19 +1278,20 @@ async function runDetect() {
   } catch (err) { status("#trace-status", err.message); }
 }
 let detectTimer;
-[["#s-tol", "#o-tol"], ["#s-thr", "#o-thr"], ["#s-area", "#o-area"], ["#s-smooth", "#o-smooth"], ["#s-simp", "#o-simp"], ["#s-tug", "#o-tug"], ["#s-brush", "#o-brush"]]
+[["#s-tol", "#o-tol"], ["#s-thr", "#o-thr"], ["#s-area", "#o-area"], ["#s-smooth", "#o-smooth"], ["#s-simp", "#o-simp"], ["#s-tug", "#o-tug"], ["#s-brush", "#o-brush"], ["#s-sect", "#o-sect"]]
   .forEach(([s, o]) => {
     const upd = () => ($(o).textContent = $(s).value);
     upd();
     $(s).addEventListener("input", () => {
       upd();
       if (s === "#s-tug" || s === "#s-brush") return draw();
+      if (s === "#s-sect") { if (S.sect) sectCompute(); return draw(); }
       clearTimeout(detectTimer); detectTimer = setTimeout(runDetect, 150);
     });
   });
 
 function clearPreview() {
-  S.preview = []; S.draft = []; S.strokes = []; S.seeds = []; S.shape = null; S.smart = null;
+  S.preview = []; S.draft = []; S.strokes = []; S.seeds = []; S.shape = null; S.smart = null; S.sect = null;
   status("#trace-status", ""); draw();
 }
 async function addPreview() {
@@ -1296,6 +1504,7 @@ function syncLayoutInputs() {
   $("#grip-at").value = s.grip_at;
   setLen($("#bed-w"), s.bed_w); setLen($("#bed-h"), s.bed_h);
   setLen($("#tab"), s.tab_mm); setLen($("#tab-sp"), s.tab_spacing_mm);
+  setLen($("#kerf"), s.kerf_mm ?? 0.6);
   $("#joint").value = s.joint; $("#nx").value = s.nx; $("#ny").value = s.ny;
   $("#basis").checked = s.tile_basis === "initial";
   $("#incl-outline").checked = s.include_outline;
@@ -1329,11 +1538,11 @@ async function saveSettings() {
     sheet_w: getLen($("#sh-w")), sheet_h: getLen($("#sh-h")), default_buffer_mm: getLen($("#def-buf")),
     grip_d_mm: getLen($("#grip-d")), grip_auto: $("#grip-auto").checked, grip_at: $("#grip-at").value,
     bed_w: getLen($("#bed-w")), bed_h: getLen($("#bed-h")), tab_mm: getLen($("#tab")), tab_spacing_mm: getLen($("#tab-sp")),
-    joint: $("#joint").value, nx: +$("#nx").value || 0, ny: +$("#ny").value || 0,
+    kerf_mm: getLen($("#kerf")), joint: $("#joint").value, nx: +$("#nx").value || 0, ny: +$("#ny").value || 0,
     tile_basis: $("#basis").checked ? "initial" : "current", include_outline: $("#incl-outline").checked,
   });
 }
-["#sh-w", "#sh-h", "#def-buf", "#grip-d", "#bed-w", "#bed-h", "#tab", "#tab-sp"].forEach((id) => $(id).addEventListener("len", saveSettings));
+["#sh-w", "#sh-h", "#def-buf", "#grip-d", "#bed-w", "#bed-h", "#tab", "#tab-sp", "#kerf"].forEach((id) => $(id).addEventListener("len", saveSettings));
 ["#joint", "#nx", "#ny", "#incl-outline", "#grip-auto", "#grip-at", "#basis"].forEach((id) => $(id).addEventListener("change", saveSettings));
 $("#show-tiles").addEventListener("change", draw);
 // exporting with suppressed cutouts asks first
@@ -1433,7 +1642,7 @@ function setMode(m) {
   S.mode = m;
   $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
   $$("[data-panel]").forEach((s) => (s.style.display = s.dataset.panel === m ? "" : "none"));
-  S.preview = []; S.draft = []; S.strokes = []; S.seeds = []; S.shape = null; S.smart = null;
+  S.preview = []; S.draft = []; S.strokes = []; S.seeds = []; S.shape = null; S.smart = null; S.sect = null;
   if (m === "calibrate") { S.measure = null; setMeasuring(false); }
   if (m !== "calibrate" && S.cropping) endCrop();
   updateButtons();

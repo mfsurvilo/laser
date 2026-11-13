@@ -66,7 +66,8 @@
         <button data-tool="draw" title="Click points, click first point or double-click to close">Draw</button>
         <button data-tool="freehand" title="Drag to trace; let go and drag again to carry on from where you stopped">✎ Freehand</button>
         <button data-tool="brush" title="Paint the outline in or out (Alt = the other way)">🖌 Brush</button>
-        <button data-tool="tug" title="Drag an outline to push/pull it into shape">Tug</button>
+        <button data-tool="tug" title="Grab a point on an outline and drag it into shape">Tug</button>
+        <button data-tool="section" title="Drag along part of an outline, then smooth it or make it straight">〰 Smooth / straighten</button>
         <button data-tool="circle" title="Exact circle: click to place, or drag out the radius">◯ Circle</button>
         <button data-tool="rect" title="Exact rectangle: click to place, or drag out a square">▭ Rectangle</button>
       </div>
@@ -84,7 +85,11 @@
       <div class="opts" data-for="brush"><div class="fmt"><span class="seg">
         <button type="button" id="br-add" class="active">Add</button><button type="button" id="br-erase">Erase</button></span></div></div>
       <div class="slider" data-for="brush"><label>Brush size (mm) <output id="o-brush"></output></label><input id="s-brush" type="range" min="1" max="40" step="0.5" value="6"></div>
-      <div class="slider" data-for="tug"><label>Tug radius (mm) <output id="o-tug"></output></label><input id="s-tug" type="range" min="2" max="60" value="12"></div>
+      <div class="slider" data-for="tug"><label>Tug reach along outline (mm) <output id="o-tug"></output></label><input id="s-tug" type="range" min="0" max="60" value="12"></div>
+      <div class="opts" data-for="section"><div class="fmt"><span class="seg">
+        <button type="button" id="sc-smooth" class="active">Smooth</button><button type="button" id="sc-straight">Straight line</button></span></div>
+        <div class="slider" id="sect-level"><label>Smoothing (mm) <output id="o-sect"></output></label><input id="s-sect" type="range" min="0.5" max="30" step="0.5" value="5"></div>
+        <div class="row"><button id="sect-cancel">Cancel (Esc)</button><button id="sect-apply" class="primary">Apply (Enter)</button></div></div>
       <div class="row">
         <button id="prev-clear">Clear (Esc)</button>
         <button id="prev-add" class="primary">Add cutout (Enter)</button>
@@ -120,7 +125,7 @@
       <label>Sheet width <input class="len" id="sh-w" data-mm=""></label>
       <label>Sheet height <input class="len" id="sh-h" data-mm=""></label>
       <button id="sheet-reset" class="link">Reset sheet to calibration</button>
-      <label>Default buffer for new cutouts <input class="len" id="def-buf" data-mm="1"></label>
+      <label>Default buffer for new cutouts <input class="len" id="def-buf" data-mm="0"></label>
 
       <h4>Finger grips</h4>
       <label class="check"><input id="grip-auto" type="checkbox"> Add a finger grip to new cutouts</label>
@@ -142,6 +147,7 @@
         <select id="joint"><option value="jigsaw">Jigsaw</option><option value="dovetail">Dovetail</option><option value="straight">Straight</option></select></label>
       <label>Joint size <input class="len" id="tab" data-mm="12"></label>
       <label>Joint spacing <input class="len" id="tab-sp" data-mm="100"></label>
+      <label title="Width of the laser cut. Each piece's seam edge is pushed out by half of this so joints fit tight and cutouts across a seam keep their length. Lower it if joints are too tight to push together.">Laser kerf <input class="len" id="kerf" data-mm="0.6"></label>
       <div class="row">
         <label>Columns <input id="nx" type="number" min="0" value="0" title="0 = automatic"></label>
         <label>Rows <input id="ny" type="number" min="0" value="0" title="0 = automatic"></label>
